@@ -1,0 +1,122 @@
+# DocVerify AI Setup - Walkthrough
+
+## What Was Done
+
+### 1. Python Environment
+- ✅ Installed **Python 3.11** via Homebrew (required for numpy 2.x / langchain-community)
+- ✅ Installed **Poetry** package manager via Homebrew
+- ✅ Configured Poetry virtualenv at `/Users/nks/Library/Caches/pypoetry/virtualenvs/`
+
+### 2. Project Structure Created
+```
+docverify-ai/
+├── src/                    # Main source code (27 directories)
+│   ├── api/               # FastAPI endpoints + routes/schemas/middleware
+│   ├── core/              # Core configuration
+│   ├── database/          # Database clients + repositories
+│   ├── ocr/               # OCR engines
+│   ├── llm/               # LLM integrations + prompts/chains
+│   ├── classification/    # Document classification
+│   ├── extraction/        # Field extraction
+│   ├── validation/        # Validation rules
+│   ├── detection/         # Detection logic
+│   ├── fraud/             # Fraud detection
+│   ├── mcp/               # MCP tools/resources
+│   ├── orchestration/     # Agents/tools
+│   ├── preprocessing/     # Preprocessing logic
+│   └── rag/               # RAG implementation
+├── ui/                    # Streamlit frontend
+├── tests/                 # Unit/integration tests
+├── synthetic_data/        # Templates/fonts/samples
+├── scripts/               # Utility scripts
+└── docs/                  # Documentation
+```
+
+### 3. Dependencies Installed
+
+#### Web Framework & API
+| Package | Purpose |
+|---------|---------|
+| **FastAPI** | Modern async web framework for building the REST API. Provides automatic OpenAPI docs, dependency injection, and high performance for document upload/verification endpoints. |
+| **uvicorn** | ASGI server that runs FastAPI. Handles async requests efficiently for concurrent document processing. |
+| **python-multipart** | Enables file upload parsing in FastAPI. Required for accepting document images/PDFs via multipart form data. |
+
+#### User Interface
+| Package | Purpose |
+|---------|---------|
+| **Streamlit** | Rapid prototyping UI framework. Creates interactive dashboards for document upload, viewing OCR results, and verification status without frontend code. |
+
+#### Database & Vector Storage
+| Package | Purpose |
+|---------|---------|
+| **supabase** | PostgreSQL-as-a-service client. Stores documents, verifications, and audit logs with built-in auth and real-time features. |
+| **SQLAlchemy** | ORM for complex queries and schema management. Provides typed models for documents/verifications tables. |
+| **asyncpg** | Async PostgreSQL driver. Enables non-blocking database operations during document processing pipelines. |
+| **pgvector** | Vector similarity search extension. Stores document embeddings in Supabase for duplicate detection and semantic search. |
+
+#### LLM & AI Integration
+| Package | Purpose |
+|---------|---------|
+| **langchain** | Framework for LLM pipelines. Chains together prompts, tools, and agents for document understanding workflows. |
+| **langchain-google-genai** | Gemini integration for LangChain. Connects to Google's free-tier LLM for field extraction and validation. |
+| **langchain-community** | Community integrations (Ollama, etc.). Enables local LLM inference via Ollama as fallback/hybrid option. |
+| **google-generativeai** | Direct Gemini SDK. Low-level access for vision tasks (reading document images) and custom prompting. |
+
+#### Data & Utilities
+| Package | Purpose |
+|---------|---------|
+| **pydantic** | Data validation and serialization. Defines strongly-typed schemas for API requests/responses and document fields. |
+| **pydantic-settings** | Environment config management. Loads `.env` variables with type validation for API keys and settings. |
+| **python-dotenv** | Loads `.env` files. Reads configuration without hardcoding secrets in source code. |
+| **httpx** | Async HTTP client. Calls external APIs (Supabase, Gemini) with connection pooling and retry logic. |
+| **numpy** | Numerical computing. Processes image arrays, embedding vectors, and confidence score calculations. |
+| **pandas** | Data manipulation. Structures OCR results, extracted fields, and validation reports as DataFrames. |
+| **structlog** | Structured logging. Creates JSON logs with context (document IDs, processing steps) for debugging pipelines. |
+| **Faker** | Fake data generation. Creates synthetic Indian documents (names, Aadhaar numbers, addresses) for testing. |
+
+#### Development Tools
+| Package | Purpose |
+|---------|---------|
+| **pytest** | Test framework. Runs unit/integration tests for OCR engines, validators, and API endpoints. |
+| **pytest-asyncio** | Async test support. Tests async database operations and LLM chains. |
+| **black** | Code formatter. Enforces consistent Python style across the codebase. |
+| **ruff** | Fast linter. Catches bugs and style issues in seconds (replaces flake8/isort). |
+| **mypy** | Static type checker. Validates type hints to catch errors before runtime. |
+
+### 4. Configuration Files Created
+- [.env](file:///Users/nks/Desktop/DocVerify%20AI/.env) - Environment template with placeholders
+- [.gitignore](file:///Users/nks/Desktop/DocVerify%20AI/.gitignore) - Python gitignore
+- [README.md](file:///Users/nks/Desktop/DocVerify%20AI/README.md) - Project overview
+- [pyproject.toml](file:///Users/nks/Desktop/DocVerify%20AI/pyproject.toml) - Poetry configuration
+
+## Verification Results
+
+All core imports tested successfully:
+- ✅ Pydantic
+- ✅ FastAPI  
+- ✅ Streamlit
+- ✅ Supabase
+- ✅ LangChain
+- ✅ Google Gemini
+
+## Next Steps
+
+1. **Edit `.env`** with your actual API keys:
+   - `SUPABASE_URL` / `SUPABASE_KEY` / `SUPABASE_SERVICE_KEY`
+   - `GOOGLE_API_KEY`
+
+2. **Activate the environment**:
+   ```bash
+   cd "/Users/nks/Desktop/DocVerify AI"
+   poetry shell
+   ```
+
+3. **Implement core modules** per the guide:
+   - `src/core/config.py`
+   - `src/database/client.py`
+   - `src/api/main.py`
+   - `ui/app.py`
+
+> [!NOTE]
+> Some dependencies from the guide were not installed (PaddleOCR, EasyOCR, PyMuPDF, Pillow, OpenCV) as they require additional
+> system dependencies. Add them when needed with `poetry add paddleocr opencv-python pillow pymupdf`.
