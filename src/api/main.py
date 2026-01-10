@@ -19,12 +19,9 @@ from pydantic import BaseModel, Field
 from src.core.config import get_settings
 from src.core.logger import logger
 from src.orchestration.processor import DocumentProcessor
+from src.api import storage
 
 settings = get_settings()
-
-# --- In-Memory Storage (MVP - Replace with Supabase later) ---
-documents_store: Dict[str, Dict] = {}
-verifications_store: Dict[str, Dict] = {}
 
 # Global Processor Instance
 processor = None
@@ -148,8 +145,7 @@ async def health_check():
         "status": "online",
         "processor_initialized": processor is not None,
         "timestamp": datetime.utcnow().isoformat(),
-        "documents_in_memory": len(documents_store),
-        "verifications_in_memory": len(verifications_store)
+        "database_enabled": settings.USE_DATABASE
     }
 
 
@@ -189,7 +185,7 @@ async def upload_document(
         file_hash = compute_file_hash(file_path)
         file_size = os.path.getsize(file_path)
 
-        # Store document info
+        # Store document
         doc_info = {
             "document_id": document_id,
             "file_name": file.filename,
@@ -200,9 +196,8 @@ async def upload_document(
             "uploaded_at": datetime.utcnow().isoformat(),
             "status": "uploaded"
         }
-        documents_store[document_id] = doc_info
-
-        logger.info("Document uploaded", document_id=document_id, hash=file_hash[:16])
+        await storage.save_document(doc_info)
+        logger.info("Document uploaded", document_id=document_id)
 
         return DocumentUploadResponse(
             document_id=document_id,
@@ -223,58 +218,34 @@ async def list_documents(
     limit: int = Query(10, ge=1, le=100),
     offset: int = Query(0, ge=0)
 ):
-    """
-    List uploaded documents.
-    """
-    docs = list(documents_store.values())
-    total = len(docs)
-
-    # Apply pagination
-    paginated = docs[offset:offset + limit]
-
-    return {
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "documents": paginated
-    }
+    """List uploaded documents."""
+    docs = await storage.list_documents(limit=limit, offset=offset)
+    return {"total": len(docs), "limit": limit, "offset": offset, "documents": docs}
 
 
 @app.get("/api/v1/documents/{document_id}")
 async def get_document(document_id: str):
-    """
-    Get document details by ID.
-    """
-    if document_id not in documents_store:
+    """Get document details by ID."""
+    doc = await storage.get_document(document_id)
+    if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    return documents_store[document_id]
+    return doc
 
 
 @app.delete("/api/v1/documents/{document_id}")
 async def delete_document(document_id: str):
-    """
-    Delete a document by ID.
-    """
-    if document_id not in documents_store:
+    """Delete a document by ID."""
+    doc = await storage.get_document(document_id)
+    if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    doc = documents_store[document_id]
+    # Delete file
+    file_path = doc.get("file_path")
+    if file_path and os.path.exists(file_path):
+        os.remove(file_path)
 
-    # Delete file if exists
-    if os.path.exists(doc["file_path"]):
-        os.remove(doc["file_path"])
-
-    # Remove from store
-    del documents_store[document_id]
-
-    # Remove related verifications
-    to_delete = [vid for vid, v in verifications_store.items() if v.get("document_id") == document_id]
-    for vid in to_delete:
-        del verifications_store[vid]
-
+    await storage.delete_document(document_id)
     logger.info("Document deleted", document_id=document_id)
-
     return {"status": "deleted", "document_id": document_id}
 
 
@@ -311,10 +282,11 @@ async def verify_document(
 
         # Option 2: Use existing document_id
         elif document_id:
-            if document_id not in documents_store:
+            doc = await storage.get_document(document_id)
+            if not doc:
                 raise HTTPException(status_code=404, detail="Document not found")
             doc_id = document_id
-            file_path = documents_store[document_id]["file_path"]
+            file_path = doc["file_path"]
 
         else:
             raise HTTPException(
@@ -334,11 +306,11 @@ async def verify_document(
             "verified_at": datetime.utcnow().isoformat(),
             **result
         }
-        verifications_store[verification_id] = verification
+        await storage.save_verification(verification)
 
         # Update document status
-        if doc_id in documents_store:
-            documents_store[doc_id]["status"] = "verified" if result.get("status") == "success" else "failed"
+        status = "verified" if result.get("status") == "success" else "failed"
+        await storage.update_document(doc_id, {"status": status})
 
         return verification
 
@@ -351,13 +323,11 @@ async def verify_document(
 
 @app.get("/api/v1/verify/{verification_id}")
 async def get_verification(verification_id: str):
-    """
-    Get verification result by ID.
-    """
-    if verification_id not in verifications_store:
+    """Get verification result by ID."""
+    ver = await storage.get_verification(verification_id)
+    if not ver:
         raise HTTPException(status_code=404, detail="Verification not found")
-
-    return verifications_store[verification_id]
+    return ver
 
 
 # --- Standalone OCR Endpoint ---
@@ -451,54 +421,17 @@ async def classify_document(request: ClassifyRequest):
 # --- Analytics Endpoints ---
 @app.get("/api/v1/analytics/summary")
 async def analytics_summary():
-    """
-    Get verification analytics summary.
-    """
-    total_docs = len(documents_store)
-    total_verifications = len(verifications_store)
-
-    # Count by status
-    verified_count = sum(1 for v in verifications_store.values() if v.get("status") == "success")
-    failed_count = sum(1 for v in verifications_store.values() if v.get("status") == "failed")
-
-    # Count by document type
-    doc_type_counts = {}
-    for v in verifications_store.values():
-        doc_type = v.get("document_type", "unknown")
-        doc_type_counts[doc_type] = doc_type_counts.get(doc_type, 0) + 1
-
-    return {
-        "total_documents": total_docs,
-        "total_verifications": total_verifications,
-        "verified_successfully": verified_count,
-        "verification_failed": failed_count,
-        "success_rate": verified_count / total_verifications if total_verifications > 0 else 0,
-        "by_document_type": doc_type_counts
-    }
+    """Get verification analytics summary."""
+    stats = await storage.get_stats()
+    return stats
 
 
 @app.get("/api/v1/analytics/accuracy")
 async def analytics_accuracy():
-    """
-    Get accuracy metrics for verification.
-    """
-    # Calculate average confidence
-    confidences = [
-        v.get("confidence", 0) for v in verifications_store.values()
-        if v.get("confidence") is not None
-    ]
-    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-
-    # Count validation results
-    valid_count = sum(
-        1 for v in verifications_store.values()
-        if v.get("validation", {}).get("is_valid", False)
-    )
-
+    """Get accuracy metrics."""
+    stats = await storage.get_stats()
     return {
-        "total_verifications": len(verifications_store),
-        "average_confidence": round(avg_confidence, 4),
-        "documents_validated": valid_count,
-        "validation_rate": valid_count / len(verifications_store) if verifications_store else 0,
-        "note": "Metrics are from in-memory storage. Enable Supabase for persistent metrics."
+        "total_verifications": stats.get("total_verifications", 0),
+        "success_rate": stats.get("success_rate", 0),
+        "database_enabled": settings.USE_DATABASE
     }

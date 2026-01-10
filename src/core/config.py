@@ -18,9 +18,10 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     
     # Supabase
-    SUPABASE_URL: str
-    SUPABASE_KEY: str  # anon key
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_KEY: Optional[str] = None
     SUPABASE_SERVICE_KEY: Optional[str] = None
+    USE_DATABASE: bool = False  # Set True to persist to Supabase
     
     # Google Gemini
     GOOGLE_API_KEY: str
