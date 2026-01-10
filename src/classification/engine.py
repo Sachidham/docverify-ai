@@ -86,13 +86,13 @@ class DocumentClassifier:
         try:
             prompt = f"""
             Identify the type of Indian official document from the extracted text below.
-            Possible types: Aadhaar Card, PAN Card, Voter ID, Driving License.
+            Possible types: Aadhaar Card, PAN Card, Voter ID, Driving License, Passport, Birth Certificate.
             If unsure, return 'unknown'.
-            
-            Return ONLY the internal code: 'aadhaar_card', 'pan_card', 'voter_id', 'driving_license', or 'unknown'.
-            
+
+            Return ONLY the internal code: 'aadhaar_card', 'pan_card', 'voter_id', 'driving_license', 'passport', 'birth_certificate', or 'unknown'.
+
             Text:
-            {text[:2000]} 
+            {text[:2000]}
             """
             
             response = await self.llm.ainvoke([

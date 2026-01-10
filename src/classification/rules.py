@@ -44,12 +44,34 @@ DOCUMENT_TEMPLATES: Dict[str, DocumentTemplate] = {
     "driving_license": DocumentTemplate(
         name="Driving License",
         keywords=[
-            "driving licence", "union of india", "transport department", 
+            "driving licence", "union of india", "transport department",
             "valid till", "authorization to drive"
         ],
         regex_patterns=[
             r"[A-Z]{2}[0-9]{2}\s\d{11}", # New format
             r"[A-Z]{2}-\d{13}"           # Hyphenated
         ]
+    ),
+    "passport": DocumentTemplate(
+        name="Passport",
+        keywords=[
+            "republic of india", "passport", "nationality", "indian",
+            "date of issue", "date of expiry", "place of birth"
+        ],
+        regex_patterns=[
+            r"[A-Z]\d{7}"  # Passport number format
+        ]
+    ),
+    "birth_certificate": DocumentTemplate(
+        name="Birth Certificate",
+        keywords=[
+            "birth certificate", "certificate of birth", "registration of birth",
+            "date of birth", "place of birth", "name of child", "registrar"
+        ],
+        regex_patterns=[
+            r"Registration\s*No\.?\s*[:=]?\s*(\d+)",
+            r"Birth\s*No\.?\s*[:=]?\s*(\d+)"
+        ],
+        min_keywords=3
     )
 }

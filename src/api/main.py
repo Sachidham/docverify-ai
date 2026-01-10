@@ -1,59 +1,62 @@
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
+"""
+DocVerify AI - FastAPI Application
+
+REST API endpoints for document verification.
+"""
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import shutil
 import os
 import uuid
-from typing import Dict, Any
+import hashlib
+from datetime import datetime
+from typing import Dict, Any, Optional, List
+
+from pydantic import BaseModel, Field
 
 from src.core.config import get_settings
 from src.core.logger import logger
-from src.orchestration.agent_manager import AgentManager
-from src.orchestration.agents import OCRAgent, ClassificationAgent, ExtractionAgent
+from src.orchestration.processor import DocumentProcessor
 
 settings = get_settings()
 
-# Global Agent Manager
-agent_manager = AgentManager()
+# --- In-Memory Storage (MVP - Replace with Supabase later) ---
+documents_store: Dict[str, Dict] = {}
+verifications_store: Dict[str, Dict] = {}
+
+# Global Processor Instance
+processor = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifecycle manager: Initialize agents on startup, shutdown on exit.
+    Lifecycle manager: Initialize processor on startup.
     """
-    logger.info("Startup: Initializing Agent Manager...")
-    
-    # Register core agents
-    agent_manager.register_agent_type("ocr", OCRAgent)
-    agent_manager.register_agent_type("classification", ClassificationAgent)
-    agent_manager.register_agent_type("extraction", ExtractionAgent)
-    
-    # Pre-spawn workers (warmup)
-    await agent_manager.spawn_agent("ocr", {"engine": settings.DEFAULT_OCR_ENGINE})
-    await agent_manager.spawn_agent("classification", {})
-    await agent_manager.spawn_agent("extraction", {})
-    
-    logger.info("Startup: Agents ready")
-    
+    global processor
+    logger.info("Startup: Initializing Document Processor...")
+    try:
+        processor = DocumentProcessor()
+        logger.info("Startup: Processor ready")
+    except Exception as e:
+        logger.error("Startup Failed", error=str(e))
+
     yield
-    
-    logger.info("Shutdown: Terminating agents...")
-    await agent_manager.shutdown_all()
+
+    logger.info("Shutdown: Cleanup...")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="AI-Powered Document Verification API",
+    description="AI-Powered Document Verification API for Indian Government Documents",
     version="0.1.0",
     lifespan=lifespan
 )
 
-# CORS (Allow Streamlit)
-origins = [
-    "http://localhost:8501",
-    "http://localhost:3000",
-    "*" # For dev
-]
-
+# CORS
+origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -62,57 +65,440 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health")
-async def health_check():
-    """
-    Health check endpoint.
-    """
+
+# --- Pydantic Models ---
+class DocumentUploadResponse(BaseModel):
+    document_id: str
+    file_name: str
+    file_size: int
+    file_hash: str
+    status: str
+    message: str
+
+
+class VerifyRequest(BaseModel):
+    document_id: Optional[str] = None
+    language_hint: Optional[str] = "en"
+    document_type_hint: Optional[str] = None
+    run_fraud_check: bool = True
+
+
+class DocumentInfo(BaseModel):
+    document_id: str
+    file_name: str
+    file_path: str
+    file_hash: str
+    file_size: int
+    uploaded_at: str
+    status: str
+
+
+class OCRRequest(BaseModel):
+    language_hint: Optional[str] = "en"
+    preprocess: bool = True
+
+
+class ClassifyRequest(BaseModel):
+    ocr_text: str
+    use_llm_fallback: bool = True
+
+
+# --- Helper Functions ---
+def compute_file_hash(file_path: str) -> str:
+    """Compute SHA256 hash of file."""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+
+# --- Root & Health Endpoints ---
+@app.get("/")
+async def root():
+    """API Information."""
     return {
-        "status": "online",
-        "app": settings.APP_NAME,
-        "agents": agent_manager.list_active_agents()
+        "name": settings.APP_NAME,
+        "version": "0.1.0",
+        "description": "AI-Powered Document Verification Platform",
+        "endpoints": {
+            "health": "/health",
+            "docs": "/docs",
+            "upload": "/api/v1/documents/upload",
+            "verify": "/api/v1/verify",
+            "ocr": "/api/v1/ocr/extract",
+            "classify": "/api/v1/classify"
+        },
+        "supported_documents": [
+            "Aadhaar Card",
+            "PAN Card",
+            "Voter ID",
+            "Driving License",
+            "Passport",
+            "Birth Certificate"
+        ],
+        "supported_languages": ["en", "hi", "ta", "te"]
     }
 
-@app.post("/api/v1/verify")
-async def verify_document(
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "online",
+        "processor_initialized": processor is not None,
+        "timestamp": datetime.utcnow().isoformat(),
+        "documents_in_memory": len(documents_store),
+        "verifications_in_memory": len(verifications_store)
+    }
+
+
+# --- Document Endpoints ---
+@app.post("/api/v1/documents/upload", response_model=DocumentUploadResponse)
+async def upload_document(
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None
+    auto_verify: bool = Query(False, description="Automatically run verification after upload")
 ):
     """
-    Main verification endpoint.
-    Accepts a file, saves it, and runs the verification pipeline.
+    Upload a document for verification.
+
+    Accepts PDF, PNG, JPG, JPEG, TIFF formats.
+    Returns document ID for subsequent operations.
     """
+    # Validate file type
+    allowed_types = ["application/pdf", "image/png", "image/jpeg", "image/jpg", "image/tiff"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file.content_type}. Allowed: {allowed_types}"
+        )
+
     try:
-        request_id = str(uuid.uuid4())
-        logger.info("Received verification request", request_id=request_id, filename=file.filename)
-        
-        # 1. Save file locally (simulation of storage)
+        document_id = str(uuid.uuid4())
+        logger.info("Uploading document", document_id=document_id, filename=file.filename)
+
+        # Create uploads directory
         os.makedirs("uploads", exist_ok=True)
-        file_path = f"uploads/{request_id}_{file.filename}"
-        
+        file_path = f"uploads/{document_id}_{file.filename}"
+
+        # Save file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-            
-        logger.info("File saved", path=file_path)
 
-        # 2. Trigger Agents (Mock Pipeline for now)
-        # In real implementation, we would orchestrate this properly
-        # For now, we just return a success signal with mock data
-        
-        return {
-            "verification_id": request_id, 
-            "status": "processing",
-            "message": "Document received and processing started",
-            "mock_result": {
-                "document_type": "aadhaar_card",
-                "extracted_fields": {
-                    "name": "Mock User",
-                    "id": "1234-5678-9012"
-                },
-                "verification_status": "pending_validation"
-            }
+        # Compute hash
+        file_hash = compute_file_hash(file_path)
+        file_size = os.path.getsize(file_path)
+
+        # Store document info
+        doc_info = {
+            "document_id": document_id,
+            "file_name": file.filename,
+            "file_path": file_path,
+            "file_hash": file_hash,
+            "file_size": file_size,
+            "mime_type": file.content_type,
+            "uploaded_at": datetime.utcnow().isoformat(),
+            "status": "uploaded"
         }
-        
+        documents_store[document_id] = doc_info
+
+        logger.info("Document uploaded", document_id=document_id, hash=file_hash[:16])
+
+        return DocumentUploadResponse(
+            document_id=document_id,
+            file_name=file.filename,
+            file_size=file_size,
+            file_hash=file_hash,
+            status="uploaded",
+            message="Document uploaded successfully. Use /api/v1/verify to verify."
+        )
+
+    except Exception as e:
+        logger.error("Upload failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/documents")
+async def list_documents(
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    """
+    List uploaded documents.
+    """
+    docs = list(documents_store.values())
+    total = len(docs)
+
+    # Apply pagination
+    paginated = docs[offset:offset + limit]
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "documents": paginated
+    }
+
+
+@app.get("/api/v1/documents/{document_id}")
+async def get_document(document_id: str):
+    """
+    Get document details by ID.
+    """
+    if document_id not in documents_store:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return documents_store[document_id]
+
+
+@app.delete("/api/v1/documents/{document_id}")
+async def delete_document(document_id: str):
+    """
+    Delete a document by ID.
+    """
+    if document_id not in documents_store:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc = documents_store[document_id]
+
+    # Delete file if exists
+    if os.path.exists(doc["file_path"]):
+        os.remove(doc["file_path"])
+
+    # Remove from store
+    del documents_store[document_id]
+
+    # Remove related verifications
+    to_delete = [vid for vid, v in verifications_store.items() if v.get("document_id") == document_id]
+    for vid in to_delete:
+        del verifications_store[vid]
+
+    logger.info("Document deleted", document_id=document_id)
+
+    return {"status": "deleted", "document_id": document_id}
+
+
+# --- Verification Endpoints ---
+@app.post("/api/v1/verify")
+async def verify_document(
+    file: Optional[UploadFile] = File(None),
+    document_id: Optional[str] = Query(None, description="Document ID from previous upload")
+):
+    """
+    Run verification on a document.
+
+    Either provide a file directly or reference a previously uploaded document_id.
+    """
+    global processor
+    if not processor:
+        raise HTTPException(status_code=503, detail="Document Processor not initialized")
+
+    try:
+        verification_id = str(uuid.uuid4())
+        file_path = None
+        doc_id = None
+
+        # Option 1: Direct file upload
+        if file:
+            doc_id = str(uuid.uuid4())
+            os.makedirs("uploads", exist_ok=True)
+            file_path = f"uploads/{doc_id}_{file.filename}"
+
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            logger.info("Received direct file for verification", verification_id=verification_id)
+
+        # Option 2: Use existing document_id
+        elif document_id:
+            if document_id not in documents_store:
+                raise HTTPException(status_code=404, detail="Document not found")
+            doc_id = document_id
+            file_path = documents_store[document_id]["file_path"]
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Either provide a file or document_id"
+            )
+
+        logger.info("Starting verification", verification_id=verification_id, path=file_path)
+
+        # Run Processing
+        result = await processor.process(file_path)
+
+        # Store verification
+        verification = {
+            "verification_id": verification_id,
+            "document_id": doc_id,
+            "verified_at": datetime.utcnow().isoformat(),
+            **result
+        }
+        verifications_store[verification_id] = verification
+
+        # Update document status
+        if doc_id in documents_store:
+            documents_store[doc_id]["status"] = "verified" if result.get("status") == "success" else "failed"
+
+        return verification
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Verification failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/verify/{verification_id}")
+async def get_verification(verification_id: str):
+    """
+    Get verification result by ID.
+    """
+    if verification_id not in verifications_store:
+        raise HTTPException(status_code=404, detail="Verification not found")
+
+    return verifications_store[verification_id]
+
+
+# --- Standalone OCR Endpoint ---
+@app.post("/api/v1/ocr/extract")
+async def ocr_extract(
+    file: UploadFile = File(...),
+    language_hint: str = Query("en", description="Language hint: en, hi, ta, te"),
+    preprocess: bool = Query(True, description="Apply image preprocessing")
+):
+    """
+    Standalone OCR extraction.
+
+    Extract text from document without full verification pipeline.
+    """
+    global processor
+    if not processor:
+        raise HTTPException(status_code=503, detail="Processor not initialized")
+
+    try:
+        # Save temp file
+        temp_id = str(uuid.uuid4())
+        os.makedirs("uploads", exist_ok=True)
+        temp_path = f"uploads/temp_{temp_id}_{file.filename}"
+
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Preprocess if requested
+        if preprocess:
+            processed_image = processor.preprocessor.process_path(temp_path)
+        else:
+            import cv2
+            processed_image = cv2.imread(temp_path)
+
+        # Run OCR
+        text = processor.ocr.extract(processed_image)
+
+        # Cleanup
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+        return {
+            "status": "success",
+            "text": text,
+            "language_hint": language_hint,
+            "preprocessed": preprocess,
+            "word_count": len(text.split()),
+            "char_count": len(text)
+        }
+
+    except Exception as e:
+        logger.error("OCR extraction failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Standalone Classification Endpoint ---
+@app.post("/api/v1/classify")
+async def classify_document(request: ClassifyRequest):
+    """
+    Standalone document classification.
+
+    Classify document type from OCR text without full verification.
+    """
+    global processor
+    if not processor:
+        raise HTTPException(status_code=503, detail="Processor not initialized")
+
+    try:
+        result = await processor.classifier.classify(request.ocr_text)
+
+        return {
+            "status": "success",
+            "document_type": result.get("type", "unknown"),
+            "confidence": result.get("confidence", 0.0),
+            "method": result.get("method", "unknown"),
+            "supported_types": [
+                "aadhaar_card",
+                "pan_card",
+                "voter_id",
+                "driving_license",
+                "passport",
+                "birth_certificate"
+            ]
+        }
+
+    except Exception as e:
+        logger.error("Classification failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Analytics Endpoints ---
+@app.get("/api/v1/analytics/summary")
+async def analytics_summary():
+    """
+    Get verification analytics summary.
+    """
+    total_docs = len(documents_store)
+    total_verifications = len(verifications_store)
+
+    # Count by status
+    verified_count = sum(1 for v in verifications_store.values() if v.get("status") == "success")
+    failed_count = sum(1 for v in verifications_store.values() if v.get("status") == "failed")
+
+    # Count by document type
+    doc_type_counts = {}
+    for v in verifications_store.values():
+        doc_type = v.get("document_type", "unknown")
+        doc_type_counts[doc_type] = doc_type_counts.get(doc_type, 0) + 1
+
+    return {
+        "total_documents": total_docs,
+        "total_verifications": total_verifications,
+        "verified_successfully": verified_count,
+        "verification_failed": failed_count,
+        "success_rate": verified_count / total_verifications if total_verifications > 0 else 0,
+        "by_document_type": doc_type_counts
+    }
+
+
+@app.get("/api/v1/analytics/accuracy")
+async def analytics_accuracy():
+    """
+    Get accuracy metrics for verification.
+    """
+    # Calculate average confidence
+    confidences = [
+        v.get("confidence", 0) for v in verifications_store.values()
+        if v.get("confidence") is not None
+    ]
+    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+
+    # Count validation results
+    valid_count = sum(
+        1 for v in verifications_store.values()
+        if v.get("validation", {}).get("is_valid", False)
+    )
+
+    return {
+        "total_verifications": len(verifications_store),
+        "average_confidence": round(avg_confidence, 4),
+        "documents_validated": valid_count,
+        "validation_rate": valid_count / len(verifications_store) if verifications_store else 0,
+        "note": "Metrics are from in-memory storage. Enable Supabase for persistent metrics."
+    }

@@ -1,34 +1,34 @@
 from typing import Dict, Any
 from src.orchestration.agents.base_agent import BaseAgent
+# Import at method level if needed, but safe here if extraction/engine exists
+# from src.extraction.engine import ExtractionEngine
 
 class ExtractionAgent(BaseAgent):
     """
-    Agent responsible for extracting specific fields from text.
+    Agent responsible for extracting columns/fields from structured text.
     """
     
     async def _initialize_impl(self, config: Dict[str, Any]):
-        self.use_llm = config.get("use_llm", True)
+        from src.extraction.engine import ExtractionEngine
+        self.engine = ExtractionEngine()
         self.logger.info("Extraction Agent initialized")
 
     async def _process_impl(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Input: {"ocr_text": str, "document_type": str}
-        Output: {"fields": dict}
+        Input: {"text": str, "document_type": str}
+        Output: {"extracted_data": dict}
         """
-        doc_type = input_data.get("document_type")
-        text = input_data.get("ocr_text", "")
+        text = input_data.get("text")
+        doc_type = input_data.get("document_type", "unknown")
         
-        self.logger.info("Extracting fields", doc_type=doc_type)
+        if not text:
+            raise ValueError("text input is required for extraction")
+            
+        self.logger.info("Extracting data...", doc_type=doc_type)
         
-        # Mock logic
-        fields = {}
-        if doc_type == "aadhaar_card":
-             fields = {
-                 "name": "Jane Doe",
-                 "aadhaar_number": "1234 5678 9012"
-             }
+        extracted_data = await self.engine.extract(text, doc_type)
         
         return {
-            "fields": fields,
-            "extraction_method": "mock_regex"
+            "extracted_data": extracted_data,
+            "status": "success"
         }
