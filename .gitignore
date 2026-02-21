@@ -55,6 +55,9 @@ models/
 logs/
 *.log
 
+# Uploads (user uploaded files)
+uploads/
+
 # OS
 .DS_Store
 Thumbs.db

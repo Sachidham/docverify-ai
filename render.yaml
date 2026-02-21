@@ -1,0 +1,33 @@
+# Render Blueprint - Deploy both backend and frontend
+services:
+  # FastAPI Backend
+  - type: web
+    name: docverify-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: USE_DATABASE
+        value: "false"
+    plan: free
+    healthCheckPath: /health
+
+  # Streamlit Frontend
+  - type: web
+    name: docverify-ui
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: streamlit run ui/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: API_URL
+        fromService:
+          name: docverify-api
+          type: web
+          property: host
+    plan: free

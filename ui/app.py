@@ -5,9 +5,10 @@ Beautiful UI for document verification.
 
 import streamlit as st
 import requests
+import os
 
 # --- Config ---
-API_URL = "http://localhost:8000"
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 st.set_page_config(
     page_title="DocVerify AI",
