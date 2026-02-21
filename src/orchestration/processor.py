@@ -1,9 +1,9 @@
+import os
 import cv2
 import numpy as np
 from structlog import get_logger
 from typing import Dict, Any
 
-from src.ocr.paddle_engine import PaddleOCREngine
 from src.classification.engine import DocumentClassifier
 from src.extraction.engine import ExtractionEngine
 from src.preprocessing.pipeline import ImagePreprocessor
@@ -11,17 +11,45 @@ from src.validation.engine import ValidationEngine
 
 logger = get_logger()
 
+
+def _create_ocr_engine():
+    """Create OCR engine based on environment. Falls back to lighter engines."""
+    ocr_mode = os.environ.get("OCR_ENGINE", "auto")
+
+    if ocr_mode == "tesseract":
+        from src.ocr.tesseract_engine import TesseractOCREngine
+        return TesseractOCREngine()
+
+    if ocr_mode == "auto":
+        # Try PaddleOCR first, fall back to Tesseract
+        try:
+            from src.ocr.paddle_engine import PaddleOCREngine
+            return PaddleOCREngine()
+        except Exception as e:
+            logger.warning("PaddleOCR unavailable, falling back to Tesseract", error=str(e))
+            try:
+                from src.ocr.tesseract_engine import TesseractOCREngine
+                return TesseractOCREngine()
+            except Exception as e2:
+                logger.error("No OCR engine available", error=str(e2))
+                raise e2
+
+    # Default: PaddleOCR
+    from src.ocr.paddle_engine import PaddleOCREngine
+    return PaddleOCREngine()
+
+
 class DocumentProcessor:
     """
     Orchestrates the full document verification pipeline.
     Image -> Preprocess -> OCR -> Classify -> Extract -> Validate
     """
-    
+
     def __init__(self):
         logger.info("Initializing Document Processor...")
         try:
             self.preprocessor = ImagePreprocessor()
-            self.ocr = PaddleOCREngine()
+            self.ocr = _create_ocr_engine()
             self.classifier = DocumentClassifier()
             self.extractor = ExtractionEngine()
             self.validator = ValidationEngine()

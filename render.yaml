@@ -1,10 +1,10 @@
-# Render Blueprint - Deploy both backend and frontend
+# Render Blueprint - Deploy both backend and frontend (lightweight mode)
 services:
   # FastAPI Backend
   - type: web
     name: docverify-api
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.render
     dockerCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GOOGLE_API_KEY
@@ -15,6 +15,8 @@ services:
         value: "false"
       - key: USE_DATABASE
         value: "false"
+      - key: OCR_ENGINE
+        value: tesseract
     plan: free
     healthCheckPath: /health
 
@@ -22,7 +24,7 @@ services:
   - type: web
     name: docverify-ui
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.render
     dockerCommand: streamlit run ui/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
       - key: API_URL

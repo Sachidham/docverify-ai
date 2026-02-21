@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+# System dependencies (Tesseract OCR - lightweight, no GPU needed)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-hin \
+    tesseract-ocr-tam \
+    tesseract-ocr-tel \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements first for caching
+COPY requirements-deploy.txt .
+RUN pip install --no-cache-dir -r requirements-deploy.txt
+
+# Copy source code
+COPY src/ src/
+COPY ui/ ui/
+COPY synthetic_data/ synthetic_data/
+COPY .env.render .env
+
+# Create uploads directory
+RUN mkdir -p uploads
+
+# Set environment
+ENV OCR_ENGINE=tesseract
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

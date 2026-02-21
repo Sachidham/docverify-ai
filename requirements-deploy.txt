@@ -1,0 +1,34 @@
+# Lightweight deployment dependencies (no PyTorch/PaddlePaddle)
+# For Render free tier / low-memory environments
+
+# Web Framework
+fastapi==0.128.0
+uvicorn[standard]==0.40.0
+python-multipart==0.0.21
+
+# UI
+streamlit>=1.40.0,<2.0.0
+
+# LLM (lightweight - no local models)
+langchain<0.3.0
+langchain-google-genai<2.0.0
+langchain-community<0.3.0
+google-generativeai<0.8.0
+
+# OCR (Tesseract only - lightweight)
+pytesseract>=0.3.10
+Pillow>=11.0.0,<12.0.0
+
+# Image Processing
+opencv-python-headless<4.11.0
+numpy<2.0.0
+
+# Data
+pydantic>=2.9.0,<3.0.0
+pydantic-settings>=2.6.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+httpx>=0.28.0,<0.29.0
+structlog>=24.4.0
+
+# MCP
+mcp[cli]>=1.0.0,<2.0.0
