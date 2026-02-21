@@ -2,6 +2,10 @@
 
 **@100xEngineers** | **#0to100xEngineer**
 
+**Live Demo:** https://docverify-ui.onrender.com
+**API:** https://docverify-ai.onrender.com/docs
+**GitHub:** https://github.com/naveendas96/docverify-ai
+
 ---
 
 ## 1. TL;DR
@@ -140,5 +144,10 @@ Indian government agencies manually verify millions of citizen documents (Aadhaa
 - Claude Code for AI-assisted development throughout the build
 
 ---
+
+**Links:**
+- **Live App:** https://docverify-ui.onrender.com
+- **API Docs:** https://docverify-ai.onrender.com/docs
+- **GitHub:** https://github.com/naveendas96/docverify-ai
 
 *Built with AI, for India's digital future.*
